@@ -3,6 +3,7 @@ import pandas as pd
 import random
 import time
 import io
+import zipfile
 
 # Configure the page
 st.set_page_config(
@@ -10,6 +11,12 @@ st.set_page_config(
     page_icon="📚",
     layout="wide"
 )
+
+# Initialize session state variables if they don't exist
+if 'processed' not in st.session_state:
+    st.session_state.processed = False
+if 'seed' not in st.session_state:
+    st.session_state.seed = int(time.time()) % 10000
 
 st.title("Student Group Assignment Tool")
 st.markdown("""
@@ -40,14 +47,27 @@ if uploaded_file is not None:
             st.error(f"Missing required columns: {', '.join(missing_columns)}")
             st.write("Your file should have columns: NOMBRE, CN, CS, CF (and optionally GROUP)")
         else:
+            # Add a checkbox to control whether to generate a new distribution
+            generate_new = st.checkbox(
+                "Generate new random distribution", 
+                value=not st.session_state.get('processed', False),
+                help="Uncheck to keep the current distribution if you've already processed once"
+            )
+            
+            # Update seed based on checkbox
+            if generate_new:
+                st.session_state.seed = int(time.time()) % 10000
+                st.session_state.processed = False
+            
             # Add a process button
             if st.button("Process Student Assignments"):
                 # Processing status indicator
                 status = st.empty()
                 status.info("Processing student assignments... This may take a moment.")
                 
-                # Add a random seed option with current timestamp as default
-                seed = int(time.time()) % 10000
+                # Use the seed from session state
+                seed = st.session_state.seed
+                st.write(f"Using random seed: {seed}")
                 
                 # Calculate dynamic max students per group
                 max_students_per_group = {}
@@ -59,6 +79,7 @@ if uploaded_file is not None:
                         # Calculate optimal number per group (divide by 3 and round up)
                         max_per_group = (choice_count + 2) // 3  # Ensures all students fit
                         max_students_per_group[choice] = max_per_group
+                        st.write(f"Maximum students per {choice} group: {max_per_group} (for {choice_count} students)")
                 
                 # Initialize subgroups for all combinations
                 subgrupos = {}
@@ -235,28 +256,58 @@ if uploaded_file is not None:
                         cf_stats[group] = len(subgrupos[group])
                     st.write(pd.Series(cf_stats))
                 
-                # Download buttons
+                # Save the distribution results in session state
+                st.session_state.processed = True
+                st.session_state.group_excel = group_excel.getvalue()
+                st.session_state.summary_excel = summary_excel.getvalue()
+                
+                # Display a sample of the student assignments
+                st.subheader("Sample Student Assignments")
+                st.dataframe(summary_df.head(10))
+            
+            # Download buttons section - only show if processing has been done
+            if st.session_state.processed:
                 st.subheader("Download Results")
-                col1, col2 = st.columns(2)
+                
+                # Create three columns for download buttons
+                col1, col2, col3 = st.columns(3)
+                
                 with col1:
                     st.download_button(
                         label="📥 Download Group Assignments",
-                        data=group_excel,
+                        data=st.session_state.group_excel,
                         file_name="subgrupos_asignados.xlsx",
-                        mime="application/vnd.ms-excel"
+                        mime="application/vnd.ms-excel",
+                        key="download_group"
                     )
                 
                 with col2:
                     st.download_button(
                         label="📥 Download Student Summary",
-                        data=summary_excel,
+                        data=st.session_state.summary_excel,
                         file_name="asignaciones_por_estudiante.xlsx",
-                        mime="application/vnd.ms-excel"
+                        mime="application/vnd.ms-excel",
+                        key="download_summary"
                     )
                 
-                # Display a sample of the student assignments
-                st.subheader("Sample Student Assignments")
-                st.dataframe(summary_df.head(10))
+                # Create a combined download option (both files in a ZIP)
+                with col3:
+                    # Create a zip file in memory
+                    zip_buffer = io.BytesIO()
+                    with zipfile.ZipFile(zip_buffer, 'a', zipfile.ZIP_DEFLATED) as zip_file:
+                        zip_file.writestr("subgrupos_asignados.xlsx", st.session_state.group_excel)
+                        zip_file.writestr("asignaciones_por_estudiante.xlsx", st.session_state.summary_excel)
+                    
+                    # Reset pointer to beginning
+                    zip_buffer.seek(0)
+                    
+                    st.download_button(
+                        label="📥 Download All Files (ZIP)",
+                        data=zip_buffer,
+                        file_name="student_assignments.zip",
+                        mime="application/zip",
+                        key="download_zip"
+                    )
                 
     except Exception as e:
         st.error(f"Error processing file: {str(e)}")
